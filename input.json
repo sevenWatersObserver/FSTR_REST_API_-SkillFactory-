@@ -1,0 +1,26 @@
+{
+  "beauty_title": "пер. ",
+  "title": "Чайхона",
+  "other_titles": "Номер 1",
+  "connect": "",
+ 
+  "add_time": "2012-01-01 00:00:00",
+  "user": {"email": "asdfgh@mail.ru", 		
+        "fam": "Вимм",
+		 "name": "Билль",
+		 "otc": "Данн",
+        "phone": "8 800 555 3535"}, 
+ 
+   "coords":{
+  "latitude": "60.3444",
+  "longitude": "66.2222",
+  "height": "4"},
+ 
+ 
+  "level":{"winter": "",
+  "summer": "B2",
+  "autumn": "",
+  "spring": ""},
+ 
+   "images": [{"data":"<картинка1>", "title":"Ресторан"}, {"data":"<картинка>", "title":"Вход"}]
+}
