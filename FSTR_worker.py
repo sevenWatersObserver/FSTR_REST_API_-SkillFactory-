@@ -13,18 +13,25 @@ conn = psycopg2.connect(
 
 
 class FSTRDBWorker:
-    # method that does the thing for submitData
-    # TODO: complete
-    def input_getter(self):
-        with open("example_input_fixed.json", "r", encoding="utf8") as read_f:
+    # dummy method 1, just returns input data but this does it on the example input
+    # TODO
+    @staticmethod
+    def dummy_input_process():
+        with open("example_input.json", "r", encoding="utf8") as read_f:
             raw_data = json.load(read_f)
-            print(raw_data)
-            print(type(raw_data.get("user")))
+            return json.dumps(raw_data)
 
 
 # do testing here
 if __name__ == "__main__":
-    with conn.cursor() as cur:
+    drone = FSTRDBWorker()
+    # test function, testing cursor
+    """with conn.cursor() as cur:
         cur.execute("SELECT * FROM spr_activities_types"),
         print(cur.fetchall())
-        print(type(cur.fetchall()))
+        print(type(cur.fetchall()))"""
+    # test function, updating the first example entry of the database
+    with conn.cursor() as cur:
+        cur.execute("UPDATE pereval_added SET raw_data = '%s' WHERE id = 1" % (drone.dummy_input_process())),
+        cur.execute("SELECT raw_data FROM pereval_added WHERE id = 1")
+        print(cur.fetchall())
