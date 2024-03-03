@@ -1,9 +1,9 @@
 import psycopg2
-import json
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import Union, Dict
 import MOD_DB_LOGIN as S
+# import json
 
 # инициализация - массив для проверки наличия данных в input.json, соединение с PostgreSQL БД
 # input_expect = {"beauty_title", "title", "other_titles", "connect",
@@ -31,12 +31,13 @@ class DBWorker:
     # метод для изменения записи - PATCH
     @staticmethod
     def patch_pereval(pereval_id, pro_input):
-        user_check_raw = {}
         with db_conn.cursor() as cur:
-            cur.execute("SELECT raw_data::json#>'{user}' FROM pereval_added WHERE id = %i " % pereval_id)
+            cur.execute("SELECT raw_data::json#>'{user}' FROM pereval_added WHERE id = %i AND status = 1 " % pereval_id)
             user_check_raw = cur.fetchall()
         # почему выдаётся словарь в кортеже в массиве??
         user_check = user_check_raw[0][0]
+        if not user_check:
+            raise AssertionError
         if pro_input.get("user") != user_check:
             raise SyntaxError
         with db_conn.cursor() as cur:
@@ -45,15 +46,18 @@ class DBWorker:
 
     # метод для вывода записи по id - GET by ID
     @staticmethod
-    def get_pereval_by_id(pereval_id, pro_input):
+    def get_pereval_by_id(pereval_id):
         with db_conn.cursor() as cur:
-            pass
+            cur.execute("SELECT date_added, raw_data, status FROM pereval_added WHERE id = %i " % pereval_id)
+            return cur.fetchall()
 
     # метод для вывода записи по почте - GET by E-MAIL
+    # TODO
     @staticmethod
-    def get_pereval_by_email(user_email, pro_input):
+    def get_pereval_by_email(user_email):
         with db_conn.cursor() as cur:
-            pass
+            cur.execute("SELECT raw_data FROM pereval_added WHERE raw_data::json#>>'{user,email}' = '%s'" % user_email)
+            return cur.fetchall()
 
 
 # рекомендация от FastAPI - этот класс проверяет запрос и облегчает работу со словарями
@@ -74,8 +78,9 @@ class PerevalInput(BaseModel):
 app = FastAPI()
 
 
+# REST API функция для отправления записи
 @app.post("/submitData")
-def post_pereval(user_input):
+def post_entry(user_input):
     try:
         user_input = PerevalInput()
     except Exception:
@@ -88,6 +93,7 @@ def post_pereval(user_input):
         return {"status": 200, "message": "Запрос успешно отправлен.", "id": '%s' % new_id}
 
 
+# REST API функция для изменения записи
 @app.put("/submitData/{pereval_id}")
 def update_entry(pereval_id, user_input):
     try:
@@ -97,10 +103,33 @@ def update_entry(pereval_id, user_input):
     input_dict = user_input.dict()
     try:
         DBWorker.patch_pereval(pereval_id, input_dict)
+    except AssertionError:
+        return {"state": 0, "message": "Этой записи нет, или она была принята на модерацию."}
     except SyntaxError:
         return {"state": 0, "message": "Данные пользователя не совпадают, менять эти данные запрещено."}
     else:
         return {"state": 1, "message": "Запрос успешно изменён."}
+
+
+# REST API
+@app.get("/submitData/{pereval_id}")
+def get_entry_by_id(pereval_id):
+    try:
+        entry = DBWorker.get_pereval_by_id(pereval_id)
+    except psycopg2.DatabaseError:
+        raise HTTPException(status_code=404, detail="Запрос не найден.")
+    else:
+        return entry
+
+
+@app.get("/submitData/?user__email=<{user_email}>")
+def get_entry_by_email(user_email):
+    try:
+        entry = DBWorker.get_pereval_by_email(user_email)
+    except psycopg2.DatabaseError:
+        raise HTTPException(status_code=404, detail="Запрос(ы) не найден(ы).")
+    else:
+        return entry
 
 
 # здесь всякие тесты
@@ -113,4 +142,3 @@ if __name__ == "__main__":
     read_f.close()
     """
     # тестирование здесь
-    # DBWorker.patch_pereval(1, 0)
