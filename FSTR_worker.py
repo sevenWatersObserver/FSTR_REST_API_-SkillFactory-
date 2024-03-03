@@ -1,13 +1,15 @@
 import psycopg2
 import json
 from fastapi import FastAPI
+from pydantic import BaseModel
+from typing import Union, Dict
 import MOD_DB_LOGIN as S
 
 # инициализация - массив для проверки наличия данных в input.json, соединение с PostgreSQL БД
-input_expect = {"beauty_title", "title", "other_titles", "connect",
-                "add_time", "user", "coords", "level", "images"}
+# input_expect = {"beauty_title", "title", "other_titles", "connect",
+#                 "add_time", "user", "coords", "level", "images"}
 
-conn = psycopg2.connect(
+db_conn = psycopg2.connect(
     host=S.FSTR_DB_HOST,
     database=S.FSTR_DB_NAME,
     user=S.FSTR_DB_LOGIN,
@@ -16,52 +18,99 @@ conn = psycopg2.connect(
 )
 
 
-class NotEnoughData(Exception):
-    pass
-
-
-# e
-class DBdrone:
-    # этот метод просто читает "input.json" и отправляет его
+# класс для прямой работы с БД, предполагает правильность ввода данных
+class DBWorker:
+    # метод для новой записи - POST
     @staticmethod
-    def post_raw():
-        read_f = open("input.json", "r", encoding="utf8")
-        # json.load здесь, возможно, магия; неясно что будет если убрать, или как
-        processed_input = json.load(read_f)
-        parsed_input = json.dumps(processed_input)
-        read_f.close()
-        # проверка на наличие данных?
-        if processed_input.keys() < input_expect:
-            raise NotEnoughData
-        else:
-            return parsed_input
+    def post_pereval(pro_input):
+        with db_conn.cursor() as cur:
+            cur.execute("INSERT INTO pereval_added (raw_data) VALUES ('%s') RETURNING id" % pro_input)
+            db_conn.commit()
+            return cur.fetchall()[0]
+
+    # метод для изменения записи - PATCH
+    @staticmethod
+    def patch_pereval(pereval_id, pro_input):
+        user_check_raw = {}
+        with db_conn.cursor() as cur:
+            cur.execute("SELECT raw_data::json#>'{user}' FROM pereval_added WHERE id = %i " % pereval_id)
+            user_check_raw = cur.fetchall()
+        # почему выдаётся словарь в кортеже в массиве??
+        user_check = user_check_raw[0][0]
+        if pro_input.get("user") != user_check:
+            raise SyntaxError
+        with db_conn.cursor() as cur:
+            cur.execute("UPDATE pereval_added SET raw_data = '%s' WHERE id = %i " % pro_input, pereval_id)
+            db_conn.commit()
+
+    # метод для вывода записи по id - GET by ID
+    @staticmethod
+    def get_pereval_by_id(pereval_id, pro_input):
+        with db_conn.cursor() as cur:
+            pass
+
+    # метод для вывода записи по почте - GET by E-MAIL
+    @staticmethod
+    def get_pereval_by_email(user_email, pro_input):
+        with db_conn.cursor() as cur:
+            pass
+
+
+# рекомендация от FastAPI - этот класс проверяет запрос и облегчает работу со словарями
+# FIXME: однако какие поля здесь обязательны не известно, здесь выбрано по здравому смыслу
+class PerevalInput(BaseModel):
+    beauty_title: str
+    title: str
+    other_titles: Union[str, None] = None
+    connect: Union[str, None] = None
+    add_time: str
+    user: Dict[str, str]
+    coords: Dict[str, float]
+    level: Union[Dict[str, str], None] = None
+    images: list
 
 
 # начало программы, тут стоит FastAPI
-drone = DBdrone
 app = FastAPI()
 
 
 @app.post("/submitData")
-def post_entry():
-    with conn.cursor() as cur:
-        try:
-            cur.execute("INSERT INTO pereval_added (raw_data) VALUES ('%s') RETURNING id" % drone.post_raw())
-        except psycopg2.OperationalError:
-            return {"status": 500, "message": "Ошибка подключения к базе данных", "id": 'null'}
-        except NotEnoughData:
-            return {"status": 400, "message": "Недостаточно информации", "id": 'null'}
-        else:
-            conn.commit()
-            post_return = cur.fetchall()[0]
-            return {"status": 200, "message": "Запрос успешно отправлен.", "id": '%s' % post_return}
+def post_pereval(user_input):
+    try:
+        user_input = PerevalInput()
+    except Exception:
+        return {"status": 400, "message": "Введено недостаточно данных.", "id": 'null'}
+    try:
+        new_id = DBWorker.post_pereval(user_input)
+    except psycopg2.OperationalError:
+        return {"status": 500, "message": "Ошибка подключения к базе данных.", "id": 'null'}
+    else:
+        return {"status": 200, "message": "Запрос успешно отправлен.", "id": '%s' % new_id}
+
+
+@app.put("/submitData/{pereval_id}")
+def update_entry(pereval_id, user_input):
+    try:
+        user_input = PerevalInput()
+    except Exception:
+        return {"state": 0, "message": "Введено недостаточно данных."}
+    input_dict = user_input.dict()
+    try:
+        DBWorker.patch_pereval(pereval_id, input_dict)
+    except SyntaxError:
+        return {"state": 0, "message": "Данные пользователя не совпадают, менять эти данные запрещено."}
+    else:
+        return {"state": 1, "message": "Запрос успешно изменён."}
 
 
 # здесь всякие тесты
 if __name__ == "__main__":
-    # test function, updating the first example entry of the database
-    """with conn.cursor() as cur:
-        cur.execute("UPDATE pereval_added SET raw_data = '%s' WHERE id = 1" % (drone.post_raw())),
-        cur.execute("SELECT raw_data FROM pereval_added WHERE id = 1")
-        print(cur.fetchall())"""
-    # testing anything else here
+    # пример запроса записан в "ex_input.json"; этот код можно активировать для тестирования методов
+    """
+    read_f = open("ex_input.json", "r", encoding="utf8")
+    processed_input = json.load(read_f)
+    parsed_input = json.dumps(processed_input)
+    read_f.close()
+    """
+    # тестирование здесь
+    # DBWorker.patch_pereval(1, 0)
