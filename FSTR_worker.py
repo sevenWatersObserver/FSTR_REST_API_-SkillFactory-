@@ -92,7 +92,7 @@ app = FastAPI()
 
 # REST API: функция для отправления записи
 @app.post("/submitData")
-def post_entry(user_input: PerevalInput):
+def post_entry(user_input):
     try:
         user_input = PerevalInput(**user_input)
     except pydantic.ValidationError:
