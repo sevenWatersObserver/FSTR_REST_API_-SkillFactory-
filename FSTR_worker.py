@@ -1,9 +1,9 @@
 import psycopg2
-import json
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import Union, Dict
 import MOD_DB_LOGIN as S
+# import json
 
 # инициализация - массив для проверки наличия данных в input.json, соединение с PostgreSQL БД
 # input_expect = {"beauty_title", "title", "other_titles", "connect",
@@ -55,13 +55,9 @@ class DBWorker:
     # TODO
     @staticmethod
     def get_pereval_by_email(user_email):
-        user_check_raw = {}
         with db_conn.cursor() as cur:
-            cur.execute("SELECT raw_data::json#>'{user,}' FROM pereval_added")
-            user_check_raw = cur.fetchall()
-        user_check = str(user_check_raw)
-        user_email = user_email + " "
-        pass
+            cur.execute("SELECT raw_data FROM pereval_added WHERE raw_data::json#>>'{user,email}' = '%s'" % user_email)
+            return cur.fetchall()
 
 
 # рекомендация от FastAPI - этот класс проверяет запрос и облегчает работу со словарями
@@ -126,6 +122,16 @@ def get_entry_by_id(pereval_id):
         return entry
 
 
+@app.get("/submitData/?user__email=<{user_email}>")
+def get_entry_by_email(user_email):
+    try:
+        entry = DBWorker.get_pereval_by_email(user_email)
+    except psycopg2.DatabaseError:
+        raise HTTPException(status_code=404, detail="Запрос(ы) не найден(ы).")
+    else:
+        return entry
+
+
 # здесь всякие тесты
 if __name__ == "__main__":
     # пример запроса записан в "ex_input.json"; этот код можно активировать для тестирования методов
@@ -136,4 +142,3 @@ if __name__ == "__main__":
     read_f.close()
     """
     # тестирование здесь
-    # DBWorker.patch_pereval(1, 0)
