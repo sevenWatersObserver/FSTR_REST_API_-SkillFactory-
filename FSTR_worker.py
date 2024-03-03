@@ -1,6 +1,6 @@
 import psycopg2
 import json
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import Union, Dict
 import MOD_DB_LOGIN as S
@@ -45,15 +45,22 @@ class DBWorker:
 
     # метод для вывода записи по id - GET by ID
     @staticmethod
-    def get_pereval_by_id(pereval_id, pro_input):
+    def get_pereval_by_id(pereval_id):
         with db_conn.cursor() as cur:
-            pass
+            cur.execute("SELECT raw_data, status FROM pereval_added WHERE id = %i " % pereval_id)
+            return cur.fetchall()
 
     # метод для вывода записи по почте - GET by E-MAIL
+    # TODO
     @staticmethod
-    def get_pereval_by_email(user_email, pro_input):
+    def get_pereval_by_email(user_email):
+        user_check_raw = {}
         with db_conn.cursor() as cur:
-            pass
+            cur.execute("SELECT raw_data::json#>'{user,}' FROM pereval_added")
+            user_check_raw = cur.fetchall()
+        user_check = str(user_check_raw)
+        user_email = user_email + " "
+        pass
 
 
 # рекомендация от FastAPI - этот класс проверяет запрос и облегчает работу со словарями
@@ -75,7 +82,7 @@ app = FastAPI()
 
 
 @app.post("/submitData")
-def post_pereval(user_input):
+def post_entry(user_input):
     try:
         user_input = PerevalInput()
     except Exception:
@@ -101,6 +108,17 @@ def update_entry(pereval_id, user_input):
         return {"state": 0, "message": "Данные пользователя не совпадают, менять эти данные запрещено."}
     else:
         return {"state": 1, "message": "Запрос успешно изменён."}
+
+
+@app.get("/submitData/{pereval_id}")
+def get_entry_by_id(pereval_id):
+    entry = None
+    try:
+        entry = DBWorker.get_pereval_by_id(pereval_id)
+    except psycopg2.DatabaseError:
+        raise HTTPException(status_code=404, detail="Запрос не найден.")
+    else:
+        return entry
 
 
 # здесь всякие тесты
