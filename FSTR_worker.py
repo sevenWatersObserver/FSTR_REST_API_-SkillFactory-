@@ -31,12 +31,13 @@ class DBWorker:
     # метод для изменения записи - PATCH
     @staticmethod
     def patch_pereval(pereval_id, pro_input):
-        user_check_raw = {}
         with db_conn.cursor() as cur:
-            cur.execute("SELECT raw_data::json#>'{user}' FROM pereval_added WHERE id = %i " % pereval_id)
+            cur.execute("SELECT raw_data::json#>'{user}' FROM pereval_added WHERE id = %i AND status = 1 " % pereval_id)
             user_check_raw = cur.fetchall()
         # почему выдаётся словарь в кортеже в массиве??
         user_check = user_check_raw[0][0]
+        if not user_check:
+            raise AssertionError
         if pro_input.get("user") != user_check:
             raise SyntaxError
         with db_conn.cursor() as cur:
@@ -47,7 +48,7 @@ class DBWorker:
     @staticmethod
     def get_pereval_by_id(pereval_id):
         with db_conn.cursor() as cur:
-            cur.execute("SELECT raw_data, status FROM pereval_added WHERE id = %i " % pereval_id)
+            cur.execute("SELECT date_added, raw_data, status FROM pereval_added WHERE id = %i " % pereval_id)
             return cur.fetchall()
 
     # метод для вывода записи по почте - GET by E-MAIL
@@ -81,6 +82,7 @@ class PerevalInput(BaseModel):
 app = FastAPI()
 
 
+# REST API функция для отправления записи
 @app.post("/submitData")
 def post_entry(user_input):
     try:
@@ -95,6 +97,7 @@ def post_entry(user_input):
         return {"status": 200, "message": "Запрос успешно отправлен.", "id": '%s' % new_id}
 
 
+# REST API функция для изменения записи
 @app.put("/submitData/{pereval_id}")
 def update_entry(pereval_id, user_input):
     try:
@@ -104,15 +107,17 @@ def update_entry(pereval_id, user_input):
     input_dict = user_input.dict()
     try:
         DBWorker.patch_pereval(pereval_id, input_dict)
+    except AssertionError:
+        return {"state": 0, "message": "Этой записи нет, или она была принята на модерацию."}
     except SyntaxError:
         return {"state": 0, "message": "Данные пользователя не совпадают, менять эти данные запрещено."}
     else:
         return {"state": 1, "message": "Запрос успешно изменён."}
 
 
+# REST API
 @app.get("/submitData/{pereval_id}")
 def get_entry_by_id(pereval_id):
-    entry = None
     try:
         entry = DBWorker.get_pereval_by_id(pereval_id)
     except psycopg2.DatabaseError:
