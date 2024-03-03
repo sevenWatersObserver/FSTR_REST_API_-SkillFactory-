@@ -1,14 +1,23 @@
+"""
+FSTR_worker (лит. "ФСТР_работник") - рабочий модуль для осуществления REST API для принятия, хранения и проверки
+записей о перевалах (местоположении), от пользователей мобильного приложения ФСТР. Осуществлены 4 функции по
+требованиям: отправка записи (POST), редактирования записи (PUT), и два метода для получения записи(-ей) по ID записи
+или по электронной почте пользователя (GET). Для каждой функции этот модуль подключается к базе данных по указанию
+ФСТР, затем проделывает работу на этой базе, по каждому запросу.
+Используются внешние ресурсы: PostgreSQL, FastAPI.
+"""
+
+
 import psycopg2
+import pydantic
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel
 from typing import Union, Dict
 import MOD_DB_LOGIN as S
-# import json
+import json
 
-# инициализация - массив для проверки наличия данных в input.json, соединение с PostgreSQL БД
-# input_expect = {"beauty_title", "title", "other_titles", "connect",
-#                 "add_time", "user", "coords", "level", "images"}
-
+# инициализация
+# соединение с PostgreSQL БД
 db_conn = psycopg2.connect(
     host=S.FSTR_DB_HOST,
     database=S.FSTR_DB_NAME,
@@ -31,6 +40,7 @@ class DBWorker:
     # метод для изменения записи - PATCH
     @staticmethod
     def patch_pereval(pereval_id, pro_input):
+        # проверка через совпадение по почте - лучше метода не выдумал
         with db_conn.cursor() as cur:
             cur.execute("SELECT raw_data::json#>'{user}' FROM pereval_added WHERE id = %i AND status = 1 " % pereval_id)
             user_check_raw = cur.fetchall()
@@ -40,15 +50,16 @@ class DBWorker:
             raise AssertionError
         if pro_input.get("user") != user_check:
             raise SyntaxError
+        cooked_input = json.dumps(pro_input, ensure_ascii=False)
         with db_conn.cursor() as cur:
-            cur.execute("UPDATE pereval_added SET raw_data = '%s' WHERE id = %i " % pro_input, pereval_id)
+            cur.execute("UPDATE pereval_added SET raw_data = '%s' WHERE id = %i " % (cooked_input, pereval_id))
             db_conn.commit()
 
     # метод для вывода записи по id - GET by ID
     @staticmethod
     def get_pereval_by_id(pereval_id):
         with db_conn.cursor() as cur:
-            cur.execute("SELECT date_added, raw_data, status FROM pereval_added WHERE id = %i " % pereval_id)
+            cur.execute("SELECT raw_data, status_name FROM pereval_added JOIN mod_status ON pereval_added.status = mod_status.id WHERE pereval_added.id = %i " % pereval_id)
             return cur.fetchall()
 
     # метод для вывода записи по почте - GET by E-MAIL
@@ -61,7 +72,8 @@ class DBWorker:
 
 
 # рекомендация от FastAPI - этот класс проверяет запрос и облегчает работу со словарями
-# FIXME: однако какие поля здесь обязательны не известно, здесь выбрано по здравому смыслу
+# FIXME: однако какие поля здесь обязательны не известно, так что выбрано по здравому смыслу
+# где "Union[foo, None] = None" - не обязательное поле
 class PerevalInput(BaseModel):
     beauty_title: str
     title: str
@@ -78,29 +90,29 @@ class PerevalInput(BaseModel):
 app = FastAPI()
 
 
-# REST API функция для отправления записи
+# REST API: функция для отправления записи
 @app.post("/submitData")
-def post_entry(user_input):
+def post_entry(user_input: PerevalInput):
     try:
-        user_input = PerevalInput()
-    except Exception:
+        user_input = PerevalInput(**user_input)
+    except pydantic.ValidationError:
         return {"status": 400, "message": "Введено недостаточно данных.", "id": 'null'}
     try:
-        new_id = DBWorker.post_pereval(user_input)
+        new_id = DBWorker.post_pereval(user_input.model_dump_json())
     except psycopg2.OperationalError:
         return {"status": 500, "message": "Ошибка подключения к базе данных.", "id": 'null'}
     else:
         return {"status": 200, "message": "Запрос успешно отправлен.", "id": '%s' % new_id}
 
 
-# REST API функция для изменения записи
+# REST API: функция для изменения записи, с ограничениями на новые записи и на неизменность пользователя
 @app.put("/submitData/{pereval_id}")
 def update_entry(pereval_id, user_input):
     try:
-        user_input = PerevalInput()
-    except Exception:
+        user_input = PerevalInput(**user_input)
+    except pydantic.ValidationError:
         return {"state": 0, "message": "Введено недостаточно данных."}
-    input_dict = user_input.dict()
+    input_dict = user_input.model_dump()
     try:
         DBWorker.patch_pereval(pereval_id, input_dict)
     except AssertionError:
@@ -111,7 +123,7 @@ def update_entry(pereval_id, user_input):
         return {"state": 1, "message": "Запрос успешно изменён."}
 
 
-# REST API
+# REST API: функция для получения записи по id
 @app.get("/submitData/{pereval_id}")
 def get_entry_by_id(pereval_id):
     try:
@@ -119,9 +131,13 @@ def get_entry_by_id(pereval_id):
     except psycopg2.DatabaseError:
         raise HTTPException(status_code=404, detail="Запрос не найден.")
     else:
-        return entry
+        if not entry:
+            raise HTTPException(status_code=404, detail="Запрос не найден.")
+        else:
+            return json.dumps(entry, ensure_ascii=False)
 
 
+# REST API: функция для получения записи по эл. почте пользователя
 @app.get("/submitData/?user__email=<{user_email}>")
 def get_entry_by_email(user_email):
     try:
@@ -129,16 +145,16 @@ def get_entry_by_email(user_email):
     except psycopg2.DatabaseError:
         raise HTTPException(status_code=404, detail="Запрос(ы) не найден(ы).")
     else:
-        return entry
+        if not entry:
+            raise HTTPException(status_code=404, detail="Запрос(ы) не найден(ы).")
+        else:
+            return json.dumps(entry, ensure_ascii=False)
 
 
-# здесь всякие тесты
+# здесь проводятся тесты
 if __name__ == "__main__":
-    # пример запроса записан в "ex_input.json"; этот код можно активировать для тестирования методов
-    """
-    read_f = open("ex_input.json", "r", encoding="utf8")
-    processed_input = json.load(read_f)
-    parsed_input = json.dumps(processed_input)
-    read_f.close()
-    """
-    # тестирование здесь
+    # пример запроса записан в "ex_input.json"; этот код можно активировать для тестирования функции
+    """with open("ex_input.json", "r", encoding="utf-8") as f:
+        processed_input = json.loads(f.read())"""
+    # пример на post_entry
+    """print(post_entry(processed_input))"""
